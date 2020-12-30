@@ -1,6 +1,7 @@
 import torch.nn as nn
 import numpy as np
 import torch
+from sklearn.metrics import roc_auc_score
 
 class FFN(nn.Module):
     def __init__(self, state_size=200):

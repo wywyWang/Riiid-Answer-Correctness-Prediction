@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import datatable as dt
 
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
 
 import torch
@@ -17,15 +18,20 @@ from torch.utils.data import Dataset, DataLoader
 import Dataset as DS
 import Models as MD
 #######################################
+seed_value = 42
+torch.manual_seed(seed_value)
+torch.cuda.manual_seed(seed_value)
+torch.cuda.manual_seed_all(seed_value) # gpu vars
+#######################################
 TRAIN_SAMPLES = 320000
-MAX_SEQ = 100
+MAX_SEQ = 180
 MIN_SAMPLES = 5
 EMBED_DIM = 128
 DROPOUT_RATE = 0.2
 LEARNING_RATE = 1e-3
 MAX_LEARNING_RATE = 2e-3
-EPOCHS = 30
-TRAIN_BATCH_SIZE = 2048
+EPOCHS = 20
+TRAIN_BATCH_SIZE = 64
 #######################################
 ## Load Data
 dtypes = {
@@ -55,6 +61,7 @@ joblib.dump(group, "group.pkl.zip")
 del train_df
 gc.collect()
 
+print('preparing indexes and group')
 train_indexes = list(group.index)[:TRAIN_SAMPLES]
 valid_indexes = list(group.index)[TRAIN_SAMPLES:]
 train_group = group[group.index.isin(train_indexes)]
@@ -62,11 +69,15 @@ valid_group = group[group.index.isin(valid_indexes)]
 del group, train_indexes, valid_indexes
 print(len(train_group), len(valid_group))
 
-train_dataset = DS.SAKTDataset(train_group, n_skill, min_samples=MIN_SAMPLES, max_seq=MAX_SEQ)
+print('preparing training dataloader')
+train_dataset = DS.SAKTDataset(train_group, n_skill, max_seq=MAX_SEQ)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=8)
+del train_group
+
+print('preparing validation dataloader')
 valid_dataset = DS.SAKTDataset(valid_group, n_skill, max_seq=MAX_SEQ)
 valid_dataloader = DataLoader(valid_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=False, num_workers=8)
-
+del valid_group
 #############
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,5 +110,7 @@ for epoch in range(EPOCHS):
         step += 1
         if step >= max_steps:
             break
+
+del train_dataset, valid_dataset
 
 torch.save(model.state_dict(), "sakt_model_final.pt")
