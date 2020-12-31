@@ -1,21 +1,22 @@
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
+ACCEPTED_USER_CONTENT_SIZE = 4
+
 class SAKTDataset(Dataset):
-    def __init__(self, group, n_skill, max_seq):
+    def __init__(self, group, n_skill, max_seq=100):
         super(SAKTDataset, self).__init__()
-        ACCEPTED_USER_CONTENT_SIZE = 4
         self.samples, self.n_skill, self.max_seq = {}, n_skill, max_seq
         
         self.user_ids = []
-        for user_id in group.index:
+        for i, user_id in enumerate(group.index):
+            # if(i % 10000 == 0):
+            #     print(f'Processed {i} users')
             content_id, answered_correctly = group[user_id]
-            
             if len(content_id) >= ACCEPTED_USER_CONTENT_SIZE:
                 if len(content_id) > self.max_seq:
                     total_questions = len(content_id)
                     last_pos = total_questions // self.max_seq
-
                     for seq in range(last_pos):
                         index = f"{user_id}_{seq}"
                         self.user_ids.append(index)
@@ -30,7 +31,8 @@ class SAKTDataset(Dataset):
                     index = f'{user_id}'
                     self.user_ids.append(index)
                     self.samples[index] = (content_id, answered_correctly)
-    
+                
+                
     def __len__(self):
         return len(self.user_ids)
 
@@ -38,7 +40,7 @@ class SAKTDataset(Dataset):
         user_id = self.user_ids[index]
         content_id, answered_correctly = self.samples[user_id]
         seq_len = len(content_id)
-
+        
         content_id_seq = np.zeros(self.max_seq, dtype=int)
         answered_correctly_seq = np.zeros(self.max_seq, dtype=int)
         if seq_len >= self.max_seq:
