@@ -39,16 +39,33 @@ TRAIN_BATCH_SIZE = 64
 ACCEPTED_USER_CONTENT_SIZE = 4
 #######################################
 
-# Create folder
+## Create folder
 folder = "model/"  + time.strftime("%Y%m%d-%H%M%S")
 os.makedirs(folder, exist_ok=True)
 
 ## Load Data
-dtypes = {'timestamp': 'int64', 'user_id': 'int32' ,'content_id': 'int16','content_type_id': 'int8','answered_correctly':'int8'}
-train_df = dt.fread('./riiid-test-answer-prediction/train.csv', columns=set(dtypes.keys())).to_pandas()
-for col, dtype in dtypes.items():
+
+## Question csv
+question_dtypes = { 
+            'question_id': 'int16', 
+            'part': 'int16'
+         }
+question_df = dt.fread('./riiid-test-answer-prediction/questions.csv', columns=set(question_dtypes.keys())).to_pandas()
+for col, dtype in question_dtypes.items():
+    question_df[col] = question_df[col].astype(dtype)
+
+## Train csv
+train_dtypes = {
+            'timestamp': 'int64', 
+            'user_id': 'int32' , 
+            'content_id': 'int16', 
+            'content_type_id': 'int8', 
+            'answered_correctly':'int8'
+         }
+train_df = dt.fread('./riiid-test-answer-prediction/train.csv', columns=set(train_dtypes.keys())).to_pandas()
+for col, dtype in train_dtypes.items():
     train_df[col] = train_df[col].astype(dtype)
-train_df = train_df[train_df.content_type_id == False]
+train_df = train_df[train_df.content_type_id == False]          # False means that a question was asked
 train_df = train_df.sort_values(['timestamp'], ascending=True)
 train_df.reset_index(drop=True, inplace=True)
 
@@ -74,10 +91,10 @@ del group, train_indexes, valid_indexes
 print(len(train_group), len(valid_group))
 
 # Prepare training and validation data
-train_dataset = DS.SAKTDataset(train_group, n_skill, max_seq=MAX_SEQ)
+train_dataset = DS.SAKTDataset(train_group, question_df, n_skill, max_seq=MAX_SEQ)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=8)
 del train_group
-valid_dataset = DS.SAKTDataset(valid_group, n_skill, max_seq=MAX_SEQ)
+valid_dataset = DS.SAKTDataset(valid_group, question_df, n_skill, max_seq=MAX_SEQ)
 valid_dataloader = DataLoader(valid_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=False, num_workers=8)
 del valid_group
 
