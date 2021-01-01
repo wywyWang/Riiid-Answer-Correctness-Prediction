@@ -65,42 +65,47 @@ class SAKTDataset(Dataset):
         return x, target_id, label, parts_id
 
 class TestDataset(Dataset):
-    def __init__(self, samples, test_df, skills, max_seq):
+    def __init__(self, samples, test_df, question_df, n_skill, max_seq=100):
         super(TestDataset, self).__init__()
         self.samples = samples
         self.user_ids = [x for x in test_df["user_id"].unique()]
         self.test_df = test_df
-        self.skills = skills
+        self.question_df = question_df
         self.n_skill = len(skills)
         self.max_seq = max_seq
 
     def __len__(self):
         return self.test_df.shape[0]
-
+    
     def __getitem__(self, index):
         test_info = self.test_df.iloc[index]
-
-        user_id = test_info["user_id"]
-        target_id = test_info["content_id"]
-
+        
+        user_id = test_info['user_id']
+        target_id = test_info['content_id']
+        target_part = self.question_df['part'][target_id]
+        
         content_id_seq = np.zeros(self.max_seq, dtype=int)
         answered_correctly_seq = np.zeros(self.max_seq, dtype=int)
-
+        parts_seq = np.zeros(self.max_seq, dtype=int)
+        
         if user_id in self.samples.index:
             content_id, answered_correctly = self.samples[user_id]
-            
+            parts = self.question_df.loc[content_id, 'part'].to_list()
             seq_len = len(content_id)
-
+            
             if seq_len >= self.max_seq:
                 content_id_seq = content_id[-self.max_seq:]
                 answered_correctly_seq = answered_correctly[-self.max_seq:]
+                parts_seq = parts[-self.max_seq:]
             else:
                 content_id_seq[-seq_len:] = content_id
-                answered_correctly_seq[-seq_len:] = answered_correctly          
-        
+                answered_correctly_seq[-seq_len:] = answered_correctly
+                parts_seq[-seq_len:] = parts
+                
         x = content_id_seq[1:].copy()
         x += (answered_correctly_seq[1:] == 1) * self.n_skill
         
         questions = np.append(content_id_seq[2:], [target_id])
+        parts_id = np.append(parts_seq[2:], [target_part])
         
-        return x, questions
+        return x, questions, parts_id
