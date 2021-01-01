@@ -6,7 +6,6 @@ import logging
 import argparse
 import numpy as np
 import torch
-# from load_data import DATA, PID_DATA
 import datatable as dt
 import joblib
 import gc
@@ -18,8 +17,7 @@ from akt import AKT
 
 import Dataset as DS
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f'Device: {device}')
+from global_var import *
 
 def try_makedirs(path_):
     if not os.path.isdir(path_):
@@ -31,7 +29,8 @@ def try_makedirs(path_):
 def train_one_dataset(params, train_dataloader, valid_dataloader):
     # ================================== model initialization ==================================
     model = AKT(n_question=params.n_question, n_blocks=params.n_block, d_model=params.d_model,
-                    dropout=params.dropout, kq_same=params.kq_same, l2=params.l2).to(device)
+                    dropout=params.dropout, kq_same=params.kq_same, l2=params.l2, n_heads=params.n_head,
+                    d_ff=params.d_ff, final_fc_dim=params.final_fc_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=params.lr, betas=(0.9, 0.999), eps=1e-8)
     print("\n")
     # ================================== start training ==================================
@@ -45,8 +44,7 @@ def train_one_dataset(params, train_dataloader, valid_dataloader):
 
     for idx in range(params.max_iter):
         # Train Model
-        train_loss, train_accuracy, train_auc = train(
-            model, params, optimizer, train_dataloader, label='Train')
+        train_loss, train_accuracy, train_auc = train(model, params, optimizer, train_dataloader)
         
         print('epoch', idx + 1)
         print("train_auc: ", train_auc)
@@ -54,8 +52,7 @@ def train_one_dataset(params, train_dataloader, valid_dataloader):
         print("train_loss: ", train_loss)
 
         # Validation step
-        valid_loss, valid_accuracy, valid_auc = test(
-            model, params, optimizer, valid_dataloader, label='Valid')
+        valid_loss, valid_accuracy, valid_auc = test(model, params, optimizer, valid_dataloader)
 
         print("valid_auc: ", valid_auc)
         print("valid_accuracy: ", valid_accuracy)
@@ -99,6 +96,25 @@ def train_one_dataset(params, train_dataloader, valid_dataloader):
     f_save_log.close()
     return best_epoch
 
+def load_questions_part_and_tags(que_pth, que_num):
+    res = []
+    with open(que_pth) as f:
+        next(f)
+        for row in f.readlines():
+            data = row.strip().split(',')
+            element = dict()
+            part, tags = int(data[-2]), data[-1].split(' ')
+            element['part'] = part
+            element['tags'] = []
+            for tag in tags:
+                if tag == '':
+                    continue
+                element['tags'].append(int(tag))
+            res.append(element)
+
+    assert len(res) == que_num
+    return res
+
 if __name__ == '__main__':
     # Parse Arguments
     parser = argparse.ArgumentParser(description='Script to test KT')
@@ -112,8 +128,8 @@ if __name__ == '__main__':
     parser.add_argument('--optim', type=str, default='adam',
                         help='Default Optimizer')
     parser.add_argument('--batch_size', type=int,
-                        default=64, help='the batch size')
-    parser.add_argument('--lr', type=float, default=1e-5,
+                        default=128, help='the batch size')
+    parser.add_argument('--lr', type=float, default=1e-3,
                         help='learning rate')
     parser.add_argument('--maxgradnorm', type=float,
                         default=-1, help='maximum gradient norm')
@@ -138,22 +154,21 @@ if __name__ == '__main__':
                         default=1e-5, help='l2 penalty for difficulty')
 
     # DKVMN Specific  Parameter
-    parser.add_argument('--q_embed_dim', type=int, default=50,
-                        help='question embedding dimensions')
-    parser.add_argument('--qa_embed_dim', type=int, default=256,
-                        help='answer and question embedding dimensions')
-    parser.add_argument('--memory_size', type=int,
-                        default=50, help='memory size')
-    parser.add_argument('--init_std', type=float, default=0.1,
-                        help='weight initialization std')
+    # parser.add_argument('--q_embed_dim', type=int, default=50,
+    #                     help='question embedding dimensions')
+    # parser.add_argument('--qa_embed_dim', type=int, default=256,
+    #                     help='answer and question embedding dimensions')
+    # parser.add_argument('--memory_size', type=int,
+    #                     default=50, help='memory size')
+    # parser.add_argument('--init_std', type=float, default=0.1,
+    #                     help='weight initialization std')
     # DKT Specific Parameter
-    parser.add_argument('--hidden_dim', type=int, default=512)
-    parser.add_argument('--lamda_r', type=float, default=0.1)
-    parser.add_argument('--lamda_w1', type=float, default=0.1)
-    parser.add_argument('--lamda_w2', type=float, default=0.1)
+    # parser.add_argument('--hidden_dim', type=int, default=512)
+    # parser.add_argument('--lamda_r', type=float, default=0.1)
+    # parser.add_argument('--lamda_w1', type=float, default=0.1)
+    # parser.add_argument('--lamda_w2', type=float, default=0.1)
     parser.add_argument('--max_seq', type=int, default=200)
     parser.add_argument('--file_name', type=str, default='output')
-    parser.add_argument('--n_question', type=int, default=13523)
 
     # # Datasets and Model
     # parser.add_argument('--model', type=str, default='akt_pid',
@@ -164,19 +179,20 @@ if __name__ == '__main__':
     TRAIN_SAMPLES = 320000
     #######################################
     ## Load Data
-    dtypes = {'timestamp': 'int64', 'user_id': 'int32' ,'content_id': 'int16','content_type_id': 'int8','answered_correctly':'int8'}
-    train_df = dt.fread('./data/train.csv', columns=set(dtypes.keys())).to_pandas()
-    for col, dtype in dtypes.items():
-        train_df[col] = train_df[col].astype(dtype)
-    train_df = train_df[train_df.content_type_id == False]
-    train_df = train_df.sort_values(['timestamp'], ascending=True)
-    train_df.reset_index(drop=True, inplace=True)
+    # dtypes = {'timestamp': 'int64', 'user_id': 'int32' ,'content_id': 'int16','content_type_id': 'int8','answered_correctly':'int8'}
+    # train_df = dt.fread('./data/train.csv', columns=set(dtypes.keys())).to_pandas()
+    # for col, dtype in dtypes.items():
+    #     train_df[col] = train_df[col].astype(dtype)
+    # train_df = train_df[train_df.content_type_id == False]
+    # train_df = train_df.sort_values(['timestamp'], ascending=True)
+    # train_df.reset_index(drop=True, inplace=True)
 
     ## Preprocess
     # skills = train_df["content_id"].unique()
     # joblib.dump(skills, "skills.pkl.zip")
     skills = joblib.load('skills.pkl.zip')
     n_skill = len(skills)
+    params.n_question = n_skill
     print("number skills", len(skills))
 
     # group = train_df[['user_id', 'content_id', 'answered_correctly']].groupby('user_id').apply(lambda r: (
@@ -184,7 +200,7 @@ if __name__ == '__main__':
     #             r['answered_correctly'].values))
     # joblib.dump(group, "group.pkl.zip")
     group = joblib.load('group.pkl.zip')
-    del train_df
+    # del train_df
     gc.collect()
 
     print('preparing indexes and group')
@@ -195,14 +211,17 @@ if __name__ == '__main__':
     del group, train_indexes, valid_indexes
     print(len(train_group), len(valid_group))
 
+    print('preparing questions concepts')
+    q_concepts = load_questions_part_and_tags('./data/questions.csv', params.n_question)
+
     print('preparing training dataloader')
-    train_dataset = DS.AKTDataset(train_group, n_skill, max_seq=params.max_seq)
-    train_dataloader = DataLoader(train_dataset, batch_size=params.batch_size, shuffle=True, num_workers=8)
+    train_dataset = DS.AKTDataset(train_group, n_skill, q_concepts, max_seq=params.max_seq)
+    train_dataloader = DataLoader(train_dataset, batch_size=params.batch_size, shuffle=True, num_workers=12)
     del train_group
 
     print('preparing validation dataloader')
-    valid_dataset = DS.AKTDataset(valid_group, n_skill, max_seq=params.max_seq)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=params.batch_size, shuffle=False, num_workers=8)
+    valid_dataset = DS.AKTDataset(valid_group, n_skill, q_concepts, max_seq=params.max_seq)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=params.batch_size, shuffle=False, num_workers=12)
     del valid_group
     ###############################
 

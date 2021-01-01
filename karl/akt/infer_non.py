@@ -1,4 +1,18 @@
+import psutil
+
+import pandas as pd
+import sys
+import os
+import os.path
+import glob
+import logging
+import argparse
+import numpy as np
 import torch
+import datatable as dt
+import joblib
+import gc
+
 from torch import nn
 from torch.nn.init import xavier_uniform_
 from torch.nn.init import constant_
@@ -6,8 +20,57 @@ from torch.nn.init import xavier_normal_
 import math
 import torch.nn.functional as F
 from enum import IntEnum
-import numpy as np
-from global_var import *
+from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
+
+import riiideducation
+
+env = riiideducation.make_env()
+iter_test = env.iter_test()
+
+WEIGHT_PTH = '../input/akt-no-concept/output_12'
+
+parser = argparse.ArgumentParser(description='Script to test KT')
+# Basic Parameters
+parser.add_argument('--max_iter', type=int, default=300,
+                    help='number of iterations')
+parser.add_argument('--train_set', type=int, default=1)
+parser.add_argument('--seed', type=int, default=224, help='default seed')
+
+# Common parameters
+parser.add_argument('--optim', type=str, default='adam',
+                    help='Default Optimizer')
+parser.add_argument('--batch_size', type=int,
+                    default=128, help='the batch size')
+parser.add_argument('--lr', type=float, default=1e-3,
+                    help='learning rate')
+parser.add_argument('--maxgradnorm', type=float,
+                    default=-1, help='maximum gradient norm')
+parser.add_argument('--final_fc_dim', type=int, default=512,
+                    help='hidden state dim for final fc layer')
+
+# AKT Specific Parameter
+parser.add_argument('--d_model', type=int, default=256,
+                    help='Transformer d_model shape')
+parser.add_argument('--d_ff', type=int, default=1024,
+                    help='Transformer d_ff shape')
+parser.add_argument('--dropout', type=float,
+                    default=0.05, help='Dropout rate')
+parser.add_argument('--n_block', type=int, default=1,
+                    help='number of blocks')
+parser.add_argument('--n_head', type=int, default=8,
+                    help='number of heads in multihead attention')
+parser.add_argument('--kq_same', type=int, default=1)
+
+# AKT-R Specific Parameter
+parser.add_argument('--l2', type=float,
+                    default=1e-5, help='l2 penalty for difficulty')
+
+parser.add_argument('--max_seq', type=int, default=200)
+parser.add_argument('--file_name', type=str, default='output')
+
+params = parser.parse_args([])
+##################### MODEL ##############################
 
 
 class Dim(IntEnum):
@@ -19,7 +82,7 @@ class AKT(nn.Module):
     def __init__(self, n_question, d_model, n_blocks,
                  kq_same, dropout, final_fc_dim=512, n_heads=8, d_ff=2048,  l2=1e-5, separate_qa=False):
         super().__init__()
-        self.user_concept = True
+        self.user_concept = False
         self.n_question = n_question
         self.dropout = dropout
         self.kq_same = kq_same
@@ -30,8 +93,8 @@ class AKT(nn.Module):
         embed_l = d_model
         if self.user_concept:
             # self.difficult_param = nn.Embedding(self.n_pid+1, 1)
-            self.difficult_part = nn.Embedding(8, 1)
-            self.difficult_tag = nn.Embedding(189, 1, padding_idx=188)
+            # self.difficult_part = nn.Embedding(8, 1)
+            # self.difficult_tag = nn.Embedding(189, 1, padding_idx=188)
             self.q_embed_diff = nn.Embedding(self.n_question+1, embed_l)
             self.qa_embed_diff = nn.Embedding(2 * self.n_question + 1, embed_l)
         # n_question+1 ,d_model
@@ -45,12 +108,10 @@ class AKT(nn.Module):
                                     d_model=d_model, d_feature=d_model / n_heads, d_ff=d_ff,  kq_same=self.kq_same)
 
         self.out = nn.Sequential(
-            nn.Linear(d_model + embed_l,final_fc_dim), 
-            nn.ReLU(), 
-            nn.Dropout(self.dropout),
-            nn.Linear(final_fc_dim, 256), 
-            nn.ReLU(), 
-            nn.Dropout(self.dropout),
+            nn.Linear(d_model + embed_l,
+                      final_fc_dim), nn.ReLU(), nn.Dropout(self.dropout),
+            nn.Linear(final_fc_dim, 256), nn.ReLU(
+            ), nn.Dropout(self.dropout),
             nn.Linear(256, 1)
         )
         # self.reset()
@@ -71,10 +132,10 @@ class AKT(nn.Module):
 
         if self.user_concept:
             q_embed_diff_data = self.q_embed_diff(q_data)
-            pid_part = self.difficult_part(part_seq)
-            pid_tags = self.difficult_tag(tags_seq)
-            pid_tags = torch.mean(pid_tags, dim=2)
-            pid_embed_data = pid_part + pid_tags    # uq
+            # pid_part = self.difficult_part(part_seq)
+            # pid_tags = self.difficult_tag(tags_seq)
+            # pid_tags = torch.mean(pid_tags, dim=2)
+            # pid_embed_data = pid_part + pid_tags    # uq
 
             q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
             qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
@@ -88,57 +149,8 @@ class AKT(nn.Module):
 
         concat_q = torch.cat([d_output, q_embed_data], dim=-1)
         output = self.out(concat_q)
-        m = nn.Sigmoid()
-        preds = (output.reshape(-1)) 
 
-        return m(preds)
-
-    def forward(self, q_data, qa_data, target, part_seq, tags_seq):
-        # Batch First
-        q_embed_data = self.q_embed(q_data)  # BS, seqlen,  d_model# c_ct
-        if self.separate_qa:
-            # BS, seqlen, d_model #f_(ct,rt)
-            qa_embed_data = self.qa_embed(qa_data)
-        else:
-            qa_data = (qa_data-q_data)//self.n_question  # rt
-            # BS, seqlen, d_model # c_ct+ g_rt =e_(ct,rt)
-            qa_embed_data = self.qa_embed(qa_data)+q_embed_data
-
-        if self.user_concept:
-            q_embed_diff_data = self.q_embed_diff(q_data)  # d_ct
-            # pid_embed_data = self.difficult_param(pid_data)  
-            pid_part = self.difficult_part(part_seq)
-            pid_tags = self.difficult_tag(tags_seq)
-            pid_tags = torch.mean(pid_tags, dim=2)
-            pid_embed_data = pid_part + pid_tags    # uq
-
-            q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
-            qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
-            if self.separate_qa:
-                qa_embed_data = qa_embed_data + pid_embed_data * qa_embed_diff_data  # uq* f_(ct,rt) + e_(ct,rt)
-            else:
-                qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data+q_embed_diff_data)  # + uq *(h_rt+d_ct)
-            c_reg_loss = (pid_embed_data ** 2.).sum() * self.l2
-        else:
-            c_reg_loss = 0.
-
-        # BS.seqlen,d_model
-        # Pass to the decoder
-        # output shape BS,seqlen,d_model or d_model//2
-        d_output = self.model(q_embed_data, qa_embed_data)  # 211x512
-
-        concat_q = torch.cat([d_output, q_embed_data], dim=-1)
-        
-        output = self.out(concat_q)
-        labels = target.reshape(-1)
-        m = nn.Sigmoid()
-        preds = (output.reshape(-1))  # logit
-        mask = labels > -0.9
-        masked_labels = labels[mask].float()
-        masked_preds = preds[mask]
-        loss = nn.BCEWithLogitsLoss(reduction='none')
-        output = loss(masked_preds, masked_labels)
-        return output.sum()+c_reg_loss, m(preds), mask.sum()
+        return output
 
 
 class Architecture(nn.Module):
@@ -386,3 +398,118 @@ class CosinePositionalEmbedding(nn.Module):
 
     def forward(self, x):
         return self.weight[:, :x.size(Dim.seq), :]  # ( 1,seq,  Feature)
+
+
+##################################################################
+
+print('loading skill pkl')
+skills = joblib.load("/kaggle/input/weight-and-data/skills.pkl.zip")
+n_skill = len(skills)
+params.n_question = n_skill
+print('loading graoup pkl')
+group = joblib.load("/kaggle/input/weight-and-data/group.pkl.zip")
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f'device = {device}')
+model = AKT(n_question=params.n_question, n_blocks=params.n_block, d_model=params.d_model,
+            dropout=params.dropout, kq_same=params.kq_same, l2=params.l2, n_heads=params.n_head,
+            d_ff=params.d_ff, final_fc_dim=params.final_fc_dim).to(device)
+try:
+    print('load model weight')
+    checkpoint = torch.load(WEIGHT_PTH)
+    model.load_state_dict(checkpoint['model_state_dict'])
+except:
+    print('ERROR: change to load model weight map location at cpu')
+    checkpoint = torch.load(WEIGHT_PTH, map_location='cpu')
+    model.load_state_dict(checkpoint['model_state_dict'])
+model.to(device)
+model.eval()
+
+##################################
+class TestDataset(Dataset):
+    def __init__(self, samples, test_df, n_skill, max_seq):
+        super(TestDataset, self).__init__()
+        self.samples = samples
+        self.user_ids = [x for x in test_df["user_id"].unique()]
+        self.test_df = test_df
+        self.n_skill = n_skill
+        self.max_seq = max_seq
+
+    def __len__(self):
+        return self.test_df.shape[0]
+
+    def __getitem__(self, index):
+        test_info = self.test_df.iloc[index]
+
+        user_id = test_info["user_id"]
+        target_id = test_info["content_id"]
+
+        content_id_seq = np.zeros(self.max_seq, dtype=int)
+        answered_correctly_seq = np.zeros(self.max_seq, dtype=int)
+
+        if user_id in self.samples.index:
+            content_id, answered_correctly = self.samples[user_id]
+            
+            seq_len = len(content_id)
+
+            if seq_len >= self.max_seq:
+                content_id_seq = content_id[-self.max_seq:]
+                answered_correctly_seq = answered_correctly[-self.max_seq:]
+            else:
+                content_id_seq[:seq_len] = content_id
+                answered_correctly_seq[:seq_len] = answered_correctly
+
+        x = content_id_seq[:].copy()
+        x += (answered_correctly_seq[:] == 1) * self.n_skill
+        
+        questions = np.append(content_id_seq, [target_id])
+        x = np.append(x, [0])
+        
+        return x, questions
+
+##################################
+
+prev_test_df = None
+print('start testing')
+
+for (test_df, sample_prediction_df) in tqdm(iter_test):
+    
+    if (prev_test_df is not None) & (psutil.virtual_memory().percent<90):
+        prev_test_df['answered_correctly'] = eval(test_df['prior_group_answers_correct'].iloc[0])
+        prev_test_df = prev_test_df[prev_test_df.content_type_id == False]
+        prev_group = prev_test_df[['user_id', 'content_id', 'answered_correctly']].groupby('user_id').apply(lambda r: (
+            r['content_id'].values,
+            r['answered_correctly'].values))
+        for prev_user_id in prev_group.index:
+            prev_group_content = prev_group[prev_user_id][0]
+            prev_group_answered_correctly = prev_group[prev_user_id][1]
+            if prev_user_id in group.index:
+                group[prev_user_id] = (np.append(group[prev_user_id][0], prev_group_content), 
+                                       np.append(group[prev_user_id][1], prev_group_answered_correctly))
+            else:
+                group[prev_user_id] = (prev_group_content, prev_group_answered_correctly)
+            
+            if len(group[prev_user_id][0]) > params.max_seq:
+                new_group_content = group[prev_user_id][0][-params.max_seq:]
+                new_group_answered_correctly = group[prev_user_id][1][-params.max_seq:]
+                group[prev_user_id] = (new_group_content, new_group_answered_correctly)
+                
+    prev_test_df = test_df.copy()
+    test_df = test_df[test_df.content_type_id == False]
+    
+    test_dataset = TestDataset(group, test_df, n_skill, max_seq=params.max_seq)
+    test_dataloader = DataLoader(test_dataset, batch_size=len(test_df), shuffle=False)
+
+    item = next(iter(test_dataloader))
+    qa = item[0].to(device).long()
+    q = item[1].to(device).long()
+    
+    with torch.no_grad():
+        output= model.predict(q, qa)
+        
+    output = torch.sigmoid(output)
+    output = output[:, -1]
+    test_df['answered_correctly'] = output.cpu().numpy()
+    env.predict(test_df.loc[test_df['content_type_id'] == 0, ['row_id', 'answered_correctly']])
+
+print('finish')
