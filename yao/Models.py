@@ -4,6 +4,7 @@ import torch
 from sklearn.metrics import roc_auc_score
 
 MAX_SEQ = 180
+TAGS_NUM = 188
 DROPOUT_RATE = 0.2
 
 #######################################
@@ -59,17 +60,20 @@ class TransformerBlock(nn.Module):
     
 
 class Encoder(nn.Module):
-    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion=1, num_layers=1, heads = 8):
+    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion=1, num_layers=1, heads=8, pretrained_tags=None, max_tags_len=6):
         super(Encoder, self).__init__()
-        self.n_skill, self.embed_dim = n_skill, embed_dim
+        self.n_skill, self.embed_dim, self.max_tags_len = n_skill, embed_dim, max_tags_len
         self.embedding = nn.Embedding(2 * n_skill + 1, embed_dim)
         self.pos_embedding = nn.Embedding(max_seq - 1, embed_dim)
         self.e_embedding = nn.Embedding(n_skill + 1, embed_dim)
 
-        self.layers = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion = forward_expansion) for _ in range(num_layers)])
+        self.tags_embedding = nn.Embedding.from_pretrained(pretrained_tags, freeze=False, padding_idx=TAGS_NUM)
+        self.question_encoder = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion=forward_expansion) for _ in range(num_layers)])
+
+        self.layers = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion=forward_expansion) for _ in range(num_layers)])
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, question_ids):
+    def forward(self, x, question_ids, tag_ids):
         device = x.device
         x = self.embedding(x)
 
@@ -80,26 +84,34 @@ class Encoder(nn.Module):
         x = x.permute(1, 0, 2) # x: [bs, s_len, embed] => [s_len, bs, embed]
 
         e = self.e_embedding(question_ids)
-        e = e.permute(1, 0, 2)
+        embedded_question_id = e.permute(1, 0, 2)
+
+        embedded_tag = self.tags_embedding(tag_ids)
+        embedded_tag = embedded_tag.sum(dim=2).permute(1, 0, 2).float()
+
+        for layer in self.question_encoder:
+            question_att_mask = future_mask(embedded_tag.size(0)).to(device)
+            question_embeddings, question_att_weight = layer(embedded_question_id, embedded_tag, embedded_tag, att_mask=question_att_mask)
+            question_embeddings = question_embeddings.permute(1, 0, 2)
 
         for layer in self.layers:
-            att_mask = future_mask(e.size(0)).to(device)
-            x, att_weight = layer(e, x, x, att_mask=att_mask)
+            att_mask = future_mask(question_embeddings.size(0)).to(device)
+            x, att_weight = layer(question_embeddings, x, x, att_mask=att_mask)
             x = x.permute(1, 0, 2)
         x = x.permute(1, 0, 2)
-        return x, att_weight
+        return x, att_weight, question_att_weight
 
 
 class SAKTModel(nn.Module):
-    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion = 1, enc_layers=1, heads = 8):
+    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion=1, enc_layers=1, heads=8, pretrained_tags=None):
         super(SAKTModel, self).__init__()
-        self.encoder = Encoder(n_skill, max_seq, embed_dim, dropout, forward_expansion, num_layers=enc_layers)
+        self.encoder = Encoder(n_skill, max_seq, embed_dim, dropout, forward_expansion, num_layers=enc_layers, pretrained_tags=pretrained_tags)
         self.pred = nn.Linear(embed_dim, 1)
         
-    def forward(self, x, question_ids):
-        x, att_weight = self.encoder(x, question_ids)
+    def forward(self, x, question_ids, tag_ids):
+        x, att_weight, question_att_weight = self.encoder(x, question_ids, tag_ids)
         x = self.pred(x)
-        return x.squeeze(-1), att_weight
+        return x.squeeze(-1), att_weight, question_att_weight
 
 
 def train_fn(model, dataloader, optimizer, scheduler, criterion, device="cpu"):
@@ -115,10 +127,11 @@ def train_fn(model, dataloader, optimizer, scheduler, criterion, device="cpu"):
         x = item[0].to(device).long()
         target_id = item[1].to(device).long()
         label = item[2].to(device).float()
+        tags = item[3].to(device)
         target_mask = (target_id != 0)
 
         optimizer.zero_grad()
-        output, _, = model(x, target_id)
+        output, att_weight, question_att_weight = model(x, target_id, tags)
         loss = criterion(output, label)
         loss.backward()
         optimizer.step()
@@ -154,9 +167,10 @@ def valid_fn(model, dataloader, criterion, device="cpu"):
         x = item[0].to(device).long()
         target_id = item[1].to(device).long()
         label = item[2].to(device).float()
+        tags = item[3].to(device)
         target_mask = (target_id != 0)
 
-        output, _, = model(x, target_id)
+        output, att_weight, question_att_weight = model(x, target_id, tags)
         loss = criterion(output, label)
         valid_loss.append(loss.item())
 
