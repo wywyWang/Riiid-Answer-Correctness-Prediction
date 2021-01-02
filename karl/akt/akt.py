@@ -36,6 +36,7 @@ class AKT(nn.Module):
             self.q_embed_diff = nn.Embedding(self.n_question+1, embed_l)
             self.qa_embed_diff = nn.Embedding(2 * self.n_question + 1, embed_l)
         # n_question+1 ,d_model
+        self.learned_embed = nn.Embedding(2, embed_l)
         self.q_embed = nn.Embedding(self.n_question+1, embed_l)
         if self.separate_qa:
             self.qa_embed = nn.Embedding(2*self.n_question+1, embed_l)
@@ -46,7 +47,7 @@ class AKT(nn.Module):
                                     d_model=d_model, d_feature=d_model / n_heads, d_ff=d_ff,  kq_same=self.kq_same)
 
         self.out = nn.Sequential(
-            nn.Linear(d_model + embed_l,final_fc_dim), 
+            nn.Linear(d_model+embed_l, final_fc_dim), 
             nn.ReLU(), 
             nn.Dropout(self.dropout),
             nn.Linear(final_fc_dim, 256), 
@@ -61,9 +62,10 @@ class AKT(nn.Module):
     #         if p.size(0) == self.n_pid+1 and self.n_pid > 0:
     #             torch.nn.init.constant_(p, 0.)
 
-    def predict(self, q_data, qa_data, part_seq=None, tags_seq=None):
+    def predict(self, q_data, qa_data, learned_seq, part_seq=None, tags_seq=None):
         # Batch First
-        q_embed_data = self.q_embed(q_data)
+        learned_embed_data = self.learned_embed(learned_seq)
+        q_embed_data = self.q_embed(q_data) + learned_embed_data
         if self.separate_qa:
             qa_embed_data = self.qa_embed(qa_data)
         else:
@@ -94,9 +96,10 @@ class AKT(nn.Module):
 
         return m(preds)
 
-    def forward(self, q_data, qa_data, target, part_seq, tags_seq):
+    def forward(self, q_data, qa_data, target, learned_seq, part_seq, tags_seq):
         # Batch First
-        q_embed_data = self.q_embed(q_data)  # BS, seqlen,  d_model# c_ct
+        learned_embed_data = self.learned_embed(learned_seq)
+        q_embed_data = self.q_embed(q_data) + learned_embed_data
         if self.separate_qa:
             # BS, seqlen, d_model #f_(ct,rt)
             qa_embed_data = self.qa_embed(qa_data)

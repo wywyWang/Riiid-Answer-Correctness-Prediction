@@ -67,7 +67,6 @@ parser.add_argument('--l2', type=float,
                     default=1e-5, help='l2 penalty for difficulty')
 
 parser.add_argument('--max_seq', type=int, default=200)
-parser.add_argument('--file_name', type=str, default='output')
 
 params = parser.parse_args([])
 ##################### MODEL ##############################
@@ -150,7 +149,7 @@ class AKT(nn.Module):
         concat_q = torch.cat([d_output, q_embed_data], dim=-1)
         output = self.out(concat_q)
 
-        return output
+        return output.squeeze(-1)
 
 
 class Architecture(nn.Module):
@@ -505,7 +504,7 @@ for (test_df, sample_prediction_df) in tqdm(iter_test):
     q = item[1].to(device).long()
     
     with torch.no_grad():
-        output= model.predict(q, qa)
+        output= model.predict(q, qa).type('torch.DoubleTensor')
         
     output = torch.sigmoid(output)
     output = output[:, -1]

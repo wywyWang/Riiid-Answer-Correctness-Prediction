@@ -1,7 +1,7 @@
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
-ACCEPTED_USER_CONTENT_SIZE = 4
+ACCEPTED_USER_CONTENT_SIZE = 1
 TAGS_NUM = 188
 MAX_TAGS_LEN = 6
 ####################################
@@ -34,10 +34,7 @@ class AKTDataset(Dataset):
 
         self.user_ids = []
         for _, user_id in enumerate(group.index):
-            # if(i % 10000 == 0):
-            #     print(f'Processed {i} users')
-            content_id, answered_correctly = group[user_id]
-
+            content_id, answered_correctly, explained = group[user_id]
             #######################################################
             # Main Contribution
             if len(content_id) > self.max_seq:
@@ -48,7 +45,7 @@ class AKTDataset(Dataset):
                     self.user_ids.append(f"{user_id}_0")
                     part_list, tags_list = pack_concept(content_id[:initial], q_concepts)
                     self.samples[f"{user_id}_0"] = \
-                        (content_id[:initial], answered_correctly[:initial], part_list, tags_list)
+                        (content_id[:initial], answered_correctly[:initial], part_list, tags_list, explained[:initial])
                 
                 for seq in range(total_questions // self.max_seq):
                     self.user_ids.append(f"{user_id}_{seq+1}")
@@ -56,47 +53,53 @@ class AKTDataset(Dataset):
                     end = start + self.max_seq
                     part_list, tags_list = pack_concept(content_id[start:end], q_concepts)
                     self.samples[f"{user_id}_{seq+1}"] = \
-                        (content_id[start:end], answered_correctly[start:end], part_list, tags_list)
+                        (content_id[start:end], answered_correctly[start:end], part_list, tags_list, explained[start:end])
             else:
                 user_id = str(user_id)
                 self.user_ids.append(user_id)
                 part_list, tags_list = pack_concept(content_id, q_concepts)
                 self.samples[user_id] = \
-                    (content_id, answered_correctly, part_list, tags_list)
+                    (content_id, answered_correctly, part_list, tags_list, explained)
                 
     def __len__(self):
         return len(self.user_ids)
 
     def __getitem__(self, index):
         user_id = self.user_ids[index]
-        content_id, answered_correctly, part_list, tags_list = self.samples[user_id]
+        content_id, answered_correctly, part_list, tags_list, explained = self.samples[user_id]
         seq_len = len(content_id)
         
         content_id_seq = np.zeros(self.max_seq, dtype=int)
         answered_correctly_seq = np.zeros(self.max_seq, dtype=int)
         part_seq = np.zeros(self.max_seq, dtype=int)
         tags_seq = np.zeros((self.max_seq, MAX_TAGS_LEN), dtype=int)
+        learned_seq = np.zeros(self.max_seq, dtype=int)
         if seq_len >= self.max_seq:
             content_id_seq[:] = content_id[-self.max_seq:]
             answered_correctly_seq[:] = answered_correctly[-self.max_seq:]
             part_seq[:] = part_list[-self.max_seq:]
             tags_seq[:] = tags_list[-self.max_seq:]
+            learned_seq[:-1] = explained[-self.max_seq+1:]
             padding_mask = []
         else:
             content_id_seq[:seq_len] = content_id
             answered_correctly_seq[:seq_len] = answered_correctly
             part_seq[:seq_len] = part_list
             tags_seq[:seq_len] = tags_list
+            learned_seq[:seq_len-1] = explained[1:seq_len]
             padding_mask = list(range(seq_len, self.max_seq))
             
         q_data = content_id_seq[:]
         label = answered_correctly_seq[:]
         label[padding_mask] = -1
 
-        x = content_id_seq[:].copy()
-        x += (answered_correctly_seq[:] == 1) * self.n_skill
+        qa = content_id_seq[:].copy()
+        qa += (answered_correctly_seq[:] == 1) * self.n_skill
+        
+        # learned_seq += 1
+        # qa *= learned_seq
 
-        return x, q_data, label, part_seq, tags_seq
+        return qa, q_data, label, part_seq, tags_seq, learned_seq
 
 class TestDataset(Dataset):
     def __init__(self, samples, test_df, n_skill, max_seq):

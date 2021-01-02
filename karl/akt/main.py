@@ -153,33 +153,22 @@ if __name__ == '__main__':
     parser.add_argument('--l2', type=float,
                         default=1e-5, help='l2 penalty for difficulty')
 
-    # DKVMN Specific  Parameter
-    # parser.add_argument('--q_embed_dim', type=int, default=50,
-    #                     help='question embedding dimensions')
-    # parser.add_argument('--qa_embed_dim', type=int, default=256,
-    #                     help='answer and question embedding dimensions')
-    # parser.add_argument('--memory_size', type=int,
-    #                     default=50, help='memory size')
-    # parser.add_argument('--init_std', type=float, default=0.1,
-    #                     help='weight initialization std')
-    # DKT Specific Parameter
-    # parser.add_argument('--hidden_dim', type=int, default=512)
-    # parser.add_argument('--lamda_r', type=float, default=0.1)
-    # parser.add_argument('--lamda_w1', type=float, default=0.1)
-    # parser.add_argument('--lamda_w2', type=float, default=0.1)
     parser.add_argument('--max_seq', type=int, default=200)
     parser.add_argument('--file_name', type=str, default='output')
-
-    # # Datasets and Model
-    # parser.add_argument('--model', type=str, default='akt_pid',
-    #                     help="combination of akt/sakt/dkvmn/dkt (mandatory), pid/cid (mandatory) separated by underscore '_'. For example tf_pid")
 
     params = parser.parse_args()
 
     TRAIN_SAMPLES = 320000
     #######################################
     ## Load Data
-    # dtypes = {'timestamp': 'int64', 'user_id': 'int32' ,'content_id': 'int16','content_type_id': 'int8','answered_correctly':'int8'}
+    # dtypes = {
+    #     'timestamp': 'int64', 
+    #     'user_id': 'int32' ,
+    #     'content_id': 'int16',
+    #     'content_type_id': 'int8',
+    #     'answered_correctly':'int8',
+    #     'prior_question_had_explanation': 'boolean'
+    # }
     # train_df = dt.fread('./data/train.csv', columns=set(dtypes.keys())).to_pandas()
     # for col, dtype in dtypes.items():
     #     train_df[col] = train_df[col].astype(dtype)
@@ -195,9 +184,11 @@ if __name__ == '__main__':
     params.n_question = n_skill
     print("number skills", len(skills))
 
-    # group = train_df[['user_id', 'content_id', 'answered_correctly']].groupby('user_id').apply(lambda r: (
+    # group = train_df[['user_id', 'content_id', 'answered_correctly', 'prior_question_had_explanation']]\
+    #             .groupby('user_id').apply(lambda r: (
     #             r['content_id'].values,
-    #             r['answered_correctly'].values))
+    #             r['answered_correctly'].values,
+    #             r['prior_question_had_explanation'].values))
     # joblib.dump(group, "group.pkl.zip")
     group = joblib.load('group.pkl.zip')
     # del train_df

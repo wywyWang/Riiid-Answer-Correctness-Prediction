@@ -39,10 +39,11 @@ def train(net, params,  optimizer, train_dataloader):
 
     for item in tqdm(train_dataloader):
         optimizer.zero_grad()
-        input_qa, input_q, target, part_seq, tags_seq = item
+        input_qa, input_q, target, part_seq, tags_seq, learned_seq = item
         # target = input_qa.clone()
-        input_q, input_qa, target, part_seq, tags_seq = input_q.long().to(device), \
-            input_qa.long().to(device), target.long().to(device), part_seq.long().to(device), tags_seq.long().to(device)
+        input_q, input_qa, target, part_seq, tags_seq, learned_seq = input_q.long().to(device), \
+            input_qa.long().to(device), target.long().to(device), \
+            part_seq.long().to(device), tags_seq.long().to(device), learned_seq.long().to(device)
         # if model_type in transpose_data_model:
         # input_q = np.transpose(q_one_seq[:, :])  # Shape (bs, seqlen)
         # input_qa = np.transpose(qa_one_seq[:, :])  # Shape (bs, seqlen)
@@ -68,9 +69,9 @@ def train(net, params,  optimizer, train_dataloader):
         #     input_pid = torch.from_numpy(input_pid).long().to(device)
 
         if pid_flag:
-            loss, pred, true_ct = net(input_q, input_qa, target, part_seq, tags_seq)
+            loss, pred, true_ct = net(input_q, input_qa, target, learned_seq, part_seq, tags_seq)
         else:
-            loss, pred, true_ct = net(input_q, input_qa, target)
+            loss, pred, true_ct = net(input_q, input_qa, target, learned_seq)
         pred = pred.detach().cpu().numpy()  # (seqlen * batch_size, 1)
         loss.backward()
         # true_el += true_ct.cpu().numpy()
@@ -111,10 +112,11 @@ def test(net, params, optimizer, valid_dataloader):
     # true_el = 0
     # element_count = 0
     for item in tqdm(valid_dataloader):
-        input_qa, input_q, target, part_seq, tags_seq = item
+        input_qa, input_q, target, part_seq, tags_seq, learned_seq = item
         # target = input_qa.clone()
-        input_q, input_qa, target, part_seq, tags_seq = input_q.long().to(device), \
-            input_qa.long().to(device), target.long().to(device), part_seq.long().to(device), tags_seq.long().to(device)
+        input_q, input_qa, target, part_seq, tags_seq, learned_seq = input_q.long().to(device), \
+            input_qa.long().to(device), target.long().to(device), \
+            part_seq.long().to(device), tags_seq.long().to(device), learned_seq.long().to(device)
         # q_one_seq = q_data[:, idx*params.batch_size:(idx+1)*params.batch_size]
         # if pid_flag:
         #     pid_one_seq = pid_data[:, idx*params.batch_size:(idx+1) * params.batch_size]
@@ -150,9 +152,9 @@ def test(net, params, optimizer, valid_dataloader):
 
         with torch.no_grad():
             if pid_flag:
-                loss, pred, ct = net(input_q, input_qa, target, part_seq, tags_seq)
+                loss, pred, ct = net(input_q, input_qa, target, learned_seq, part_seq, tags_seq)
             else:
-                loss, pred, ct = net(input_q, input_qa, target)
+                loss, pred, ct = net(input_q, input_qa, target, learned_seq)
         pred = pred.cpu().numpy()  # (seqlen * batch_size, 1)
         # true_el += ct.cpu().numpy()
         target = target.cpu().numpy()
