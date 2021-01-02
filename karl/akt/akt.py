@@ -20,6 +20,7 @@ class AKT(nn.Module):
                  kq_same, dropout, final_fc_dim=512, n_heads=8, d_ff=2048,  l2=1e-5, separate_qa=False):
         super().__init__()
         self.user_concept = True
+        print(f'user concept: {self.user_concept}')
         self.n_question = n_question
         self.dropout = dropout
         self.kq_same = kq_same
@@ -60,7 +61,7 @@ class AKT(nn.Module):
     #         if p.size(0) == self.n_pid+1 and self.n_pid > 0:
     #             torch.nn.init.constant_(p, 0.)
 
-    def predict(self, q_data, qa_data):
+    def predict(self, q_data, qa_data, part_seq=None, tags_seq=None):
         # Batch First
         q_embed_data = self.q_embed(q_data)
         if self.separate_qa:

@@ -33,37 +33,36 @@ class AKTDataset(Dataset):
         self.samples, self.n_skill, self.max_seq = {}, n_skill, max_seq
 
         self.user_ids = []
-        for i, user_id in enumerate(group.index):
+        for _, user_id in enumerate(group.index):
             # if(i % 10000 == 0):
             #     print(f'Processed {i} users')
             content_id, answered_correctly = group[user_id]
-            if len(content_id) >= ACCEPTED_USER_CONTENT_SIZE:
-                if len(content_id) > self.max_seq:
-                    total_questions = len(content_id)
-                    last_pos = total_questions // self.max_seq
-                    for seq in range(last_pos):
-                        index = f"{user_id}_{seq}"
-                        self.user_ids.append(index)
-                        start = seq * self.max_seq
-                        end = (seq + 1) * self.max_seq
-                        ########
-                        part_list, tags_list = pack_concept(content_id[start:end], q_concepts)
-                        ########
-                        self.samples[index] = (content_id[start:end], answered_correctly[start:end], part_list, tags_list)
-                    if len(content_id[end:]) >= ACCEPTED_USER_CONTENT_SIZE:
-                        index = f"{user_id}_{last_pos + 1}"
-                        self.user_ids.append(index)
-                        ########
-                        part_list, tags_list = pack_concept(content_id[end:], q_concepts)
-                        ########
-                        self.samples[index] = (content_id[end:], answered_correctly[end:], part_list, tags_list)
-                else:
-                    index = f'{user_id}'
-                    self.user_ids.append(index)
-                    ########
-                    part_list, tags_list = pack_concept(content_id, q_concepts)
-                    ########
-                    self.samples[index] = (content_id, answered_correctly, part_list, tags_list)
+
+            #######################################################
+            # Main Contribution
+            if len(content_id) > self.max_seq:
+                total_questions = len(content_id)
+                initial = total_questions % self.max_seq
+
+                if initial >= ACCEPTED_USER_CONTENT_SIZE:
+                    self.user_ids.append(f"{user_id}_0")
+                    part_list, tags_list = pack_concept(content_id[:initial], q_concepts)
+                    self.samples[f"{user_id}_0"] = \
+                        (content_id[:initial], answered_correctly[:initial], part_list, tags_list)
+                
+                for seq in range(total_questions // self.max_seq):
+                    self.user_ids.append(f"{user_id}_{seq+1}")
+                    start = initial + seq * self.max_seq
+                    end = start + self.max_seq
+                    part_list, tags_list = pack_concept(content_id[start:end], q_concepts)
+                    self.samples[f"{user_id}_{seq+1}"] = \
+                        (content_id[start:end], answered_correctly[start:end], part_list, tags_list)
+            else:
+                user_id = str(user_id)
+                self.user_ids.append(user_id)
+                part_list, tags_list = pack_concept(content_id, q_concepts)
+                self.samples[user_id] = \
+                    (content_id, answered_correctly, part_list, tags_list)
                 
     def __len__(self):
         return len(self.user_ids)
@@ -90,7 +89,6 @@ class AKTDataset(Dataset):
             tags_seq[:seq_len] = tags_list
             padding_mask = list(range(seq_len, self.max_seq))
             
-        # target_id = content_id_seq[1:]
         q_data = content_id_seq[:]
         label = answered_correctly_seq[:]
         label[padding_mask] = -1
@@ -98,7 +96,6 @@ class AKTDataset(Dataset):
         x = content_id_seq[:].copy()
         x += (answered_correctly_seq[:] == 1) * self.n_skill
 
-        # return x, target_id, label
         return x, q_data, label, part_seq, tags_seq
 
 class TestDataset(Dataset):
