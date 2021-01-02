@@ -151,8 +151,6 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
 model.to(device)
 criterion.to(device)
 
-# print(model)
-
 #############
 
 best_auc = 0
