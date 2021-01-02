@@ -11,8 +11,8 @@ seed_value = 42
 torch.manual_seed(seed_value)
 torch.cuda.manual_seed(seed_value)
 torch.cuda.manual_seed_all(seed_value) # gpu vars
-# torch.backends.cudnn.deterministic = True  #needed
-# torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True  #needed
+torch.backends.cudnn.benchmark = False
 #######################################
 
 
@@ -59,19 +59,17 @@ class TransformerBlock(nn.Module):
     
 
 class Encoder(nn.Module):
-    def __init__(self, n_skill, max_seq=100, embed_dim=128, part_dim=7, dropout=DROPOUT_RATE, forward_expansion=1, num_layers=1, heads = 8):
+    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion=1, num_layers=1, heads = 8):
         super(Encoder, self).__init__()
         self.n_skill, self.embed_dim = n_skill, embed_dim
         self.embedding = nn.Embedding(2 * n_skill + 1, embed_dim)
         self.pos_embedding = nn.Embedding(max_seq - 1, embed_dim)
         self.e_embedding = nn.Embedding(n_skill + 1, embed_dim)
-        self.part_embedding = nn.Embedding(n_skill + 1, part_dim)            # TOEIC has 7 parts
-        self.e_part_embedding = nn.Linear(embed_dim + part_dim, embed_dim)
 
         self.layers = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion = forward_expansion) for _ in range(num_layers)])
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x, question_ids, parts):
+    def forward(self, x, question_ids):
         device = x.device
         x = self.embedding(x)
 
@@ -83,12 +81,6 @@ class Encoder(nn.Module):
 
         e = self.e_embedding(question_ids)
         e = e.permute(1, 0, 2)
-        embedded_parts = self.part_embedding(parts)
-        embedded_parts = embedded_parts.permute(1, 0, 2)
-
-        # Project meta parts and content id to dim
-        meta_question = torch.cat((e, embedded_parts), dim=2)
-        meta_question = self.e_part_embedding(meta_question)
 
         for layer in self.layers:
             att_mask = future_mask(e.size(0)).to(device)
@@ -99,13 +91,13 @@ class Encoder(nn.Module):
 
 
 class SAKTModel(nn.Module):
-    def __init__(self, n_skill, max_seq=100, embed_dim=128, part_dim=7, dropout=DROPOUT_RATE, forward_expansion = 1, enc_layers=1, heads = 8):
+    def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion = 1, enc_layers=1, heads = 8):
         super(SAKTModel, self).__init__()
-        self.encoder = Encoder(n_skill, max_seq, embed_dim, part_dim, dropout, forward_expansion, num_layers=enc_layers)
+        self.encoder = Encoder(n_skill, max_seq, embed_dim, dropout, forward_expansion, num_layers=enc_layers)
         self.pred = nn.Linear(embed_dim, 1)
         
-    def forward(self, x, question_ids, parts):
-        x, att_weight = self.encoder(x, question_ids, parts)
+    def forward(self, x, question_ids):
+        x, att_weight = self.encoder(x, question_ids)
         x = self.pred(x)
         return x.squeeze(-1), att_weight
 
@@ -123,11 +115,10 @@ def train_fn(model, dataloader, optimizer, scheduler, criterion, device="cpu"):
         x = item[0].to(device).long()
         target_id = item[1].to(device).long()
         label = item[2].to(device).float()
-        parts = item[3].to(device).long()
         target_mask = (target_id != 0)
 
         optimizer.zero_grad()
-        output, _, = model(x, target_id, parts)
+        output, _, = model(x, target_id)
         loss = criterion(output, label)
         loss.backward()
         optimizer.step()
@@ -163,10 +154,9 @@ def valid_fn(model, dataloader, criterion, device="cpu"):
         x = item[0].to(device).long()
         target_id = item[1].to(device).long()
         label = item[2].to(device).float()
-        parts = item[3].to(device).long()
         target_mask = (target_id != 0)
 
-        output, _, = model(x, target_id, parts)
+        output, _, = model(x, target_id)
         loss = criterion(output, label)
         valid_loss.append(loss.item())
 
