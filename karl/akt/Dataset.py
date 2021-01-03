@@ -28,7 +28,7 @@ def pack_concept(content_id_list, q_concepts):
     return part_list, tags_list
 
 class AKTDataset(Dataset):
-    def __init__(self, group, n_skill, q_concepts, max_seq=100):
+    def __init__(self, group, n_skill, q_concepts=None, max_seq=100):
         super(AKTDataset, self).__init__()
         self.samples, self.n_skill, self.max_seq = {}, n_skill, max_seq
 
@@ -43,51 +43,51 @@ class AKTDataset(Dataset):
 
                 if initial >= ACCEPTED_USER_CONTENT_SIZE:
                     self.user_ids.append(f"{user_id}_0")
-                    part_list, tags_list = pack_concept(content_id[:initial], q_concepts)
+                    # part_list, tags_list = pack_concept(content_id[:initial], q_concepts)
                     self.samples[f"{user_id}_0"] = \
-                        (content_id[:initial], answered_correctly[:initial], part_list, tags_list, explained[:initial])
+                        (content_id[:initial], answered_correctly[:initial], explained[:initial])
                 
                 for seq in range(total_questions // self.max_seq):
                     self.user_ids.append(f"{user_id}_{seq+1}")
                     start = initial + seq * self.max_seq
                     end = start + self.max_seq
-                    part_list, tags_list = pack_concept(content_id[start:end], q_concepts)
+                    # part_list, tags_list = pack_concept(content_id[start:end], q_concepts)
                     self.samples[f"{user_id}_{seq+1}"] = \
-                        (content_id[start:end], answered_correctly[start:end], part_list, tags_list, explained[start:end])
+                        (content_id[start:end], answered_correctly[start:end], explained[start:end])
             else:
                 user_id = str(user_id)
                 self.user_ids.append(user_id)
-                part_list, tags_list = pack_concept(content_id, q_concepts)
+                # part_list, tags_list = pack_concept(content_id, q_concepts)
                 self.samples[user_id] = \
-                    (content_id, answered_correctly, part_list, tags_list, explained)
+                    (content_id, answered_correctly, explained)
                 
     def __len__(self):
         return len(self.user_ids)
 
     def __getitem__(self, index):
         user_id = self.user_ids[index]
-        content_id, answered_correctly, part_list, tags_list, explained = self.samples[user_id]
+        content_id, answered_correctly, explained = self.samples[user_id]
         seq_len = len(content_id)
         
         content_id_seq = np.zeros(self.max_seq, dtype=int)
         answered_correctly_seq = np.zeros(self.max_seq, dtype=int)
-        part_seq = np.zeros(self.max_seq, dtype=int)
-        tags_seq = np.zeros((self.max_seq, MAX_TAGS_LEN), dtype=int)
+        # part_seq = np.zeros(self.max_seq, dtype=int)
+        # tags_seq = np.zeros((self.max_seq, MAX_TAGS_LEN), dtype=int)
         learned_seq = np.zeros(self.max_seq, dtype=int)
         if seq_len >= self.max_seq:
             content_id_seq[:] = content_id[-self.max_seq:]
             answered_correctly_seq[:] = answered_correctly[-self.max_seq:]
-            part_seq[:] = part_list[-self.max_seq:]
-            tags_seq[:] = tags_list[-self.max_seq:]
+            # part_seq[:] = part_list[-self.max_seq:]
+            # tags_seq[:] = tags_list[-self.max_seq:]
             learned_seq[:-1] = explained[-self.max_seq+1:]
             padding_mask = []
         else:
-            content_id_seq[:seq_len] = content_id
-            answered_correctly_seq[:seq_len] = answered_correctly
-            part_seq[:seq_len] = part_list
-            tags_seq[:seq_len] = tags_list
-            learned_seq[:seq_len-1] = explained[1:seq_len]
-            padding_mask = list(range(seq_len, self.max_seq))
+            content_id_seq[-seq_len:] = content_id
+            answered_correctly_seq[-seq_len:] = answered_correctly
+            # part_seq[:seq_len] = part_list
+            # tags_seq[:seq_len] = tags_list
+            learned_seq[-seq_len:-1] = explained[1:seq_len]
+            padding_mask = list(range(self.max_seq - seq_len))
             
         q_data = content_id_seq[:]
         label = answered_correctly_seq[:]
@@ -99,13 +99,12 @@ class AKTDataset(Dataset):
         # learned_seq += 1
         # qa *= learned_seq
 
-        return qa, q_data, label, part_seq, tags_seq, learned_seq
+        return qa, q_data, label, learned_seq
 
 class TestDataset(Dataset):
     def __init__(self, samples, test_df, n_skill, max_seq):
         super(TestDataset, self).__init__()
         self.samples = samples
-        self.user_ids = [x for x in test_df["user_id"].unique()]
         self.test_df = test_df
         self.n_skill = n_skill
         self.max_seq = max_seq

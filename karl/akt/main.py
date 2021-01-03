@@ -202,16 +202,16 @@ if __name__ == '__main__':
     del group, train_indexes, valid_indexes
     print(len(train_group), len(valid_group))
 
-    print('preparing questions concepts')
-    q_concepts = load_questions_part_and_tags('./data/questions.csv', params.n_question)
+    # print('preparing questions concepts')
+    # q_concepts = load_questions_part_and_tags('./data/questions.csv', params.n_question)
 
     print('preparing training dataloader')
-    train_dataset = DS.AKTDataset(train_group, n_skill, q_concepts, max_seq=params.max_seq)
+    train_dataset = DS.AKTDataset(train_group, n_skill, max_seq=params.max_seq)
     train_dataloader = DataLoader(train_dataset, batch_size=params.batch_size, shuffle=True, num_workers=12)
     del train_group
 
     print('preparing validation dataloader')
-    valid_dataset = DS.AKTDataset(valid_group, n_skill, q_concepts, max_seq=params.max_seq)
+    valid_dataset = DS.AKTDataset(valid_group, n_skill, max_seq=params.max_seq)
     valid_dataloader = DataLoader(valid_dataset, batch_size=params.batch_size, shuffle=False, num_workers=12)
     del valid_group
     ###############################

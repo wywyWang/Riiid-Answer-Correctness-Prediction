@@ -17,31 +17,28 @@ class Dim(IntEnum):
 
 class AKT(nn.Module):
     def __init__(self, n_question, d_model, n_blocks,
-                 kq_same, dropout, final_fc_dim=512, n_heads=8, d_ff=2048,  l2=1e-5, separate_qa=False):
+                 kq_same, dropout, final_fc_dim=512, n_heads=8, d_ff=2048,  l2=1e-5):
         super().__init__()
-        self.user_concept = True
-        print(f'user concept: {self.user_concept}')
+        # self.user_concept = False
+        # print(f'user concept: {self.user_concept}')
         self.n_question = n_question
         self.dropout = dropout
         self.kq_same = kq_same
         # self.n_pid = n_pid
         self.n_pid = -1
         self.l2 = l2
-        self.separate_qa = separate_qa
+
         embed_l = d_model
-        if self.user_concept:
-            # self.difficult_param = nn.Embedding(self.n_pid+1, 1)
-            self.difficult_part = nn.Embedding(8, 1)
-            self.difficult_tag = nn.Embedding(189, 1, padding_idx=188)
-            self.q_embed_diff = nn.Embedding(self.n_question+1, embed_l)
-            self.qa_embed_diff = nn.Embedding(2 * self.n_question + 1, embed_l)
+        # if self.user_concept:
+        #     # self.difficult_param = nn.Embedding(self.n_pid+1, 1)
+        #     self.difficult_part = nn.Embedding(8, 1)
+        #     self.difficult_tag = nn.Embedding(189, 1, padding_idx=188)
+        #     self.q_embed_diff = nn.Embedding(self.n_question+1, embed_l)
+        #     self.qa_embed_diff = nn.Embedding(2 * self.n_question + 1, embed_l)
         # n_question+1 ,d_model
         self.learned_embed = nn.Embedding(2, embed_l)
         self.q_embed = nn.Embedding(self.n_question+1, embed_l)
-        if self.separate_qa:
-            self.qa_embed = nn.Embedding(2*self.n_question+1, embed_l)
-        else:
-            self.qa_embed = nn.Embedding(2, embed_l)
+        self.qa_embed = nn.Embedding(2, embed_l)
         # Architecture Object. It contains stack of attention block
         self.model = Architecture(n_question=n_question, n_blocks=n_blocks, n_heads=n_heads, dropout=dropout,
                                     d_model=d_model, d_feature=d_model / n_heads, d_ff=d_ff,  kq_same=self.kq_same)
@@ -50,10 +47,10 @@ class AKT(nn.Module):
             nn.Linear(d_model+embed_l, final_fc_dim), 
             nn.ReLU(), 
             nn.Dropout(self.dropout),
-            nn.Linear(final_fc_dim, 256), 
+            nn.Linear(final_fc_dim, 64), 
             nn.ReLU(), 
             nn.Dropout(self.dropout),
-            nn.Linear(256, 1)
+            nn.Linear(64, 1)
         )
         # self.reset()
 
@@ -65,66 +62,55 @@ class AKT(nn.Module):
     def predict(self, q_data, qa_data, learned_seq, part_seq=None, tags_seq=None):
         # Batch First
         learned_embed_data = self.learned_embed(learned_seq)
-        q_embed_data = self.q_embed(q_data) + learned_embed_data
-        if self.separate_qa:
-            qa_embed_data = self.qa_embed(qa_data)
-        else:
-            qa_data = (qa_data-q_data)//self.n_question
-            qa_embed_data = self.qa_embed(qa_data)+q_embed_data
+        q_embed_data = self.q_embed(q_data)
+        
+        qa_data = (qa_data-q_data)//self.n_question
+        qa_embed_data = self.qa_embed(qa_data) + q_embed_data + learned_embed_data
 
-        if self.user_concept:
-            q_embed_diff_data = self.q_embed_diff(q_data)
-            pid_part = self.difficult_part(part_seq)
-            pid_tags = self.difficult_tag(tags_seq)
-            pid_tags = torch.mean(pid_tags, dim=2)
-            pid_embed_data = pid_part + pid_tags    # uq
+        # if self.user_concept:
+        #     q_embed_diff_data = self.q_embed_diff(q_data)
+        #     pid_part = self.difficult_part(part_seq)
+        #     pid_tags = self.difficult_tag(tags_seq)
+        #     pid_tags = torch.mean(pid_tags, dim=2)
+        #     pid_embed_data = pid_part + pid_tags    # uq
 
-            q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
-            qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
-            if self.separate_qa:
-                qa_embed_data = qa_embed_data + pid_embed_data * qa_embed_diff_data  # uq* f_(ct,rt) + e_(ct,rt)
-            else:
-                qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data+q_embed_diff_data)  # + uq *(h_rt+d_ct)
+        #     q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
+        #     qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
+            
+        #     qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data+q_embed_diff_data)  # + uq *(h_rt+d_ct)
 
 
         d_output = self.model(q_embed_data, qa_embed_data)
 
         concat_q = torch.cat([d_output, q_embed_data], dim=-1)
         output = self.out(concat_q)
-        m = nn.Sigmoid()
-        preds = (output.reshape(-1)) 
 
-        return m(preds)
+        return output.squeeze(-1)
 
-    def forward(self, q_data, qa_data, target, learned_seq, part_seq, tags_seq):
+    def forward(self, q_data, qa_data, target, learned_seq, part_seq=None, tags_seq=None):
         # Batch First
         learned_embed_data = self.learned_embed(learned_seq)
-        q_embed_data = self.q_embed(q_data) + learned_embed_data
-        if self.separate_qa:
-            # BS, seqlen, d_model #f_(ct,rt)
-            qa_embed_data = self.qa_embed(qa_data)
-        else:
-            qa_data = (qa_data-q_data)//self.n_question  # rt
-            # BS, seqlen, d_model # c_ct+ g_rt =e_(ct,rt)
-            qa_embed_data = self.qa_embed(qa_data)+q_embed_data
+        q_embed_data = self.q_embed(q_data)
 
-        if self.user_concept:
-            q_embed_diff_data = self.q_embed_diff(q_data)  # d_ct
-            # pid_embed_data = self.difficult_param(pid_data)  
-            pid_part = self.difficult_part(part_seq)
-            pid_tags = self.difficult_tag(tags_seq)
-            pid_tags = torch.mean(pid_tags, dim=2)
-            pid_embed_data = pid_part + pid_tags    # uq
+        qa_data = (qa_data-q_data)//self.n_question  # rt
+        # BS, seqlen, d_model # c_ct+ g_rt =e_(ct,rt)
+        qa_embed_data = self.qa_embed(qa_data) + q_embed_data + learned_embed_data
 
-            q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
-            qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
-            if self.separate_qa:
-                qa_embed_data = qa_embed_data + pid_embed_data * qa_embed_diff_data  # uq* f_(ct,rt) + e_(ct,rt)
-            else:
-                qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data+q_embed_diff_data)  # + uq *(h_rt+d_ct)
-            c_reg_loss = (pid_embed_data ** 2.).sum() * self.l2
-        else:
-            c_reg_loss = 0.
+        # if self.user_concept:
+        #     q_embed_diff_data = self.q_embed_diff(q_data)  # d_ct
+        #     # pid_embed_data = self.difficult_param(pid_data)  
+        #     pid_part = self.difficult_part(part_seq)
+        #     pid_tags = self.difficult_tag(tags_seq)
+        #     pid_tags = torch.mean(pid_tags, dim=2)
+        #     pid_embed_data = pid_part + pid_tags    # uq
+
+        #     q_embed_data = q_embed_data + pid_embed_data * q_embed_diff_data  # uq *d_ct + c_ct
+        #     qa_embed_diff_data = self.qa_embed_diff(qa_data)  # f_(ct,rt) or #h_rt
+            
+        #     qa_embed_data = qa_embed_data + pid_embed_data * (qa_embed_diff_data+q_embed_diff_data)  # + uq *(h_rt+d_ct)
+        #     c_reg_loss = (pid_embed_data ** 2.).sum() * self.l2
+        # else:
+        c_reg_loss = 0.
 
         # BS.seqlen,d_model
         # Pass to the decoder
@@ -168,15 +154,8 @@ class Architecture(nn.Module):
         ])
 
     def forward(self, q_embed_data, qa_embed_data):
-        # target shape  bs, seqlen
-        seqlen, batch_size = q_embed_data.size(1), q_embed_data.size(0)
-
-        qa_pos_embed = qa_embed_data
-        q_pos_embed = q_embed_data
-
-        y = qa_pos_embed
-        seqlen, batch_size = y.size(1), y.size(0)
-        x = q_pos_embed
+        y = qa_embed_data
+        x = q_embed_data
 
         # encoder
         for block in self.blocks_1:  # encode qas
@@ -231,7 +210,7 @@ class TransformerLayer(nn.Module):
 
         """
 
-        seqlen, batch_size = query.size(1), query.size(0)
+        seqlen = query.size(1)
         nopeek_mask = np.triu(
             np.ones((1, 1, seqlen, seqlen)), k=mask).astype('uint8')
         src_mask = (torch.from_numpy(nopeek_mask) == 0).to(device)
