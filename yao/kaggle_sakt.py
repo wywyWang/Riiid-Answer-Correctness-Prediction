@@ -73,6 +73,10 @@ def compute_pretrained(data):
     return tags_embedding, parsed_tags
 
 
+## Create folder
+folder = "model/"  + time.strftime("%Y%m%d-%H%M%S")
+os.makedirs(folder, exist_ok=True)
+
 ## Load Data
 
 ## Question csv
@@ -87,6 +91,7 @@ for col, dtype in question_dtypes.items():
 
 tags_embedding, parsed_tags = compute_pretrained(question_df['tags'].values)
 question_df['tags'] = parsed_tags
+# joblib.dump("./riiid-test-answer-prediction/parsed_questions.pkl.zip")
 
 ## Train csv
 train_dtypes = {
@@ -102,10 +107,6 @@ for col, dtype in train_dtypes.items():
 train_df = train_df[train_df.content_type_id == False]          # False means that a question was asked
 train_df = train_df.sort_values(['timestamp'], ascending=True)
 train_df.reset_index(drop=True, inplace=True)
-
-## Create folder
-folder = "model/"  + time.strftime("%Y%m%d-%H%M%S")
-os.makedirs(folder, exist_ok=True)
 
 ## Preprocess
 skills = train_df["content_id"].unique()
