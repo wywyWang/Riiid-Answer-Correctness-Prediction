@@ -15,7 +15,7 @@ class SAKTDataset(Dataset):
         self.user_ids = []
         for i, user_id in enumerate(tqdm(group.index)):
             content_id, answered_correctly = group[user_id]
-            tags = questions.loc[content_id, 'tags'].to_list()
+            tags = [questions[idx] for idx in content_id]
 
             # Main Contribution
             if len(content_id) > self.max_seq:

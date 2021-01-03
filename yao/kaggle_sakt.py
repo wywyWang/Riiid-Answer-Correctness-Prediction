@@ -130,10 +130,10 @@ del group, train_indexes, valid_indexes
 print(len(train_group), len(valid_group))
 
 # Prepare training and validation data
-train_dataset = DS.SAKTDataset(train_group, question_df, n_skill, max_seq=MAX_SEQ)
+train_dataset = DS.SAKTDataset(train_group, question_df['tags'].to_list(), n_skill, max_seq=MAX_SEQ)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, num_workers=8)
 del train_group
-valid_dataset = DS.SAKTDataset(valid_group, question_df, n_skill, max_seq=MAX_SEQ)
+valid_dataset = DS.SAKTDataset(valid_group, question_df['tags'].to_list(), n_skill, max_seq=MAX_SEQ)
 valid_dataloader = DataLoader(valid_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=False, num_workers=8)
 del valid_group
 
