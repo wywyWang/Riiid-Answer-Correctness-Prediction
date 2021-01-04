@@ -89,9 +89,12 @@ question_df = dt.fread('./riiid-test-answer-prediction/questions.csv', columns=s
 for col, dtype in question_dtypes.items():
     question_df[col] = question_df[col].astype(dtype)
 
+# Change to 1-based, because 0 is padding index
+question_df['question_id'] += 1
+
 tags_embedding, parsed_tags = compute_pretrained(question_df['tags'].values)
 question_df['tags'] = parsed_tags
-# joblib.dump("./riiid-test-answer-prediction/parsed_questions.pkl.zip")
+joblib.dump(question_df, "./riiid-test-answer-prediction/parsed_questions.pkl.zip")
 
 ## Train csv
 train_dtypes = {
@@ -107,6 +110,9 @@ for col, dtype in train_dtypes.items():
 train_df = train_df[train_df.content_type_id == False]          # False means that a question was asked
 train_df = train_df.sort_values(['timestamp'], ascending=True)
 train_df.reset_index(drop=True, inplace=True)
+
+# Change to 1-based, because 0 is padding index
+train_df['content_id'] += 1
 
 ## Preprocess
 skills = train_df["content_id"].unique()

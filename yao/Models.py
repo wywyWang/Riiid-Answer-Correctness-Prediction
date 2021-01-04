@@ -63,22 +63,32 @@ class Encoder(nn.Module):
     def __init__(self, n_skill, max_seq=100, embed_dim=128, dropout=DROPOUT_RATE, forward_expansion=1, num_layers=1, heads=8, pretrained_tags=None, max_tags_len=6):
         super(Encoder, self).__init__()
         self.n_skill, self.embed_dim, self.max_tags_len = n_skill, embed_dim, max_tags_len
-        self.embedding = nn.Embedding(2 * n_skill + 1, embed_dim)
-        self.pos_embedding = nn.Embedding(max_seq - 1, embed_dim)
-        self.e_embedding = nn.Embedding(n_skill + 1, embed_dim)
+        self.embedding = nn.Embedding(2 * n_skill + 1, embed_dim, padding_idx=0)
+        # self.pos_embedding = nn.Embedding(max_seq - 1, embed_dim, padding_idx=0)
+        self.pos_embedding = nn.Embedding(max_seq + 1, 1, padding_idx=0)
+        self.e_embedding = nn.Embedding(n_skill + 1, embed_dim, padding_idx=0)
 
         self.tags_embedding = nn.Embedding.from_pretrained(pretrained_tags, freeze=False, padding_idx=TAGS_NUM)
         self.question_encoder = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion=forward_expansion) for _ in range(num_layers)])
 
         self.layers = nn.ModuleList([TransformerBlock(embed_dim, forward_expansion=forward_expansion) for _ in range(num_layers)])
         self.dropout = nn.Dropout(dropout)
+
+    def fairseq_make_positions(self, tensor, padding_idx=0):
+        mask = tensor.ne(padding_idx).int()
+        return (
+            torch.cumsum(mask, dim=1).type_as(mask) * mask
+        ).long() + padding_idx
         
     def forward(self, x, question_ids, tag_ids):
         device = x.device
         x = self.embedding(x)
 
-        pos_id = torch.arange(x.size(1)).unsqueeze(0).to(device)
-        pos_x = self.pos_embedding(pos_id)
+        pos_id = self.fairseq_make_positions(x)
+
+        # pos_id = torch.arange(x.size(1)).unsqueeze(0).to(device)
+
+        pos_x = self.pos_embedding(pos_id).squeeze(3)
         
         x = self.dropout(x + pos_x)
         x = x.permute(1, 0, 2) # x: [bs, s_len, embed] => [s_len, bs, embed]
@@ -132,14 +142,19 @@ def train_fn(model, dataloader, optimizer, scheduler, criterion, device="cpu"):
 
         optimizer.zero_grad()
         output, att_weight, question_att_weight = model(x, target_id, tags)
+
+        # exclude padding
+        label = label[target_mask]
+        output = output[target_mask]
+
         loss = criterion(output, label)
         loss.backward()
         optimizer.step()
         scheduler.step()
         train_loss.append(loss.item())
 
-        output = torch.masked_select(output, target_mask)
-        label = torch.masked_select(label, target_mask)
+        # output = torch.masked_select(output, target_mask)
+        # label = torch.masked_select(label, target_mask)
         pred = (torch.sigmoid(output) >= 0.5).long()
         
         num_corrects += (pred == label).sum().item()
@@ -171,11 +186,16 @@ def valid_fn(model, dataloader, criterion, device="cpu"):
         target_mask = (target_id != 0)
 
         output, att_weight, question_att_weight = model(x, target_id, tags)
+
+        # exclude padding
+        label = label[target_mask]
+        output = output[target_mask]
+
         loss = criterion(output, label)
         valid_loss.append(loss.item())
 
-        output = torch.masked_select(output, target_mask)
-        label = torch.masked_select(label, target_mask)
+        # output = torch.masked_select(output, target_mask)
+        # label = torch.masked_select(label, target_mask)
         pred = (torch.sigmoid(output) >= 0.5).long()
         
         num_corrects += (pred == label).sum().item()
