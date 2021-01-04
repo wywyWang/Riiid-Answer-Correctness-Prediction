@@ -28,7 +28,7 @@ import riiideducation
 env = riiideducation.make_env()
 iter_test = env.iter_test()
 
-WEIGHT_PTH = '../input/akt-shrink-wo-concept-tail-ver/akt_shrink_wo_concept_tail_ver_21'
+WEIGHT_PTH = '../input/retrain-akt-smaller-tail/retine_akt_shrinked_smaller_tail_1'
 
 parser = argparse.ArgumentParser(description='Script to test KT')
 # Basic Parameters
@@ -52,12 +52,10 @@ parser.add_argument('--final_fc_dim', type=int, default=128,
 # AKT Specific Parameter
 parser.add_argument('--d_model', type=int, default=128,
                     help='Transformer d_model shape')
-parser.add_argument('--d_ff', type=int, default=512,
+parser.add_argument('--d_ff', type=int, default=256,
                     help='Transformer d_ff shape')
 parser.add_argument('--dropout', type=float,
                     default=0.05, help='Dropout rate')
-parser.add_argument('--n_block', type=int, default=1,
-                    help='number of blocks')
 parser.add_argument('--n_head', type=int, default=4,
                     help='number of heads in multihead attention')
 parser.add_argument('--kq_same', type=int, default=1)
@@ -76,43 +74,36 @@ class Dim(IntEnum):
     feature = 2
 
 class AKT(nn.Module):
-    def __init__(self, n_question, d_model, n_blocks,
+    def __init__(self, n_question, d_model,
                  kq_same, dropout, final_fc_dim=512, n_heads=8, d_ff=2048,  l2=1e-5):
         super().__init__()
         self.n_question = n_question
-        self.dropout = dropout
-        self.kq_same = kq_same
-
-        self.n_pid = -1
-        self.l2 = l2
-
-        embed_l = d_model
 
         # n_question+1 ,d_model
-        self.learned_embed = nn.Embedding(2, embed_l)
-        self.q_embed = nn.Embedding(self.n_question+1, embed_l)
-        self.qa_embed = nn.Embedding(2, embed_l)
+        self.learned_embed = nn.Embedding(2, d_model)
+        self.q_embed = nn.Embedding(self.n_question+1, d_model)
+        self.qa_embed = nn.Embedding(2, d_model)
         # Architecture Object. It contains stack of attention block
-        self.model = Architecture(n_question=n_question, n_blocks=n_blocks, n_heads=n_heads, dropout=dropout,
-                                    d_model=d_model, d_feature=d_model / n_heads, d_ff=d_ff,  kq_same=self.kq_same)
+        self.model = Architecture(n_question=n_question, n_heads=n_heads, dropout=dropout,
+                                    d_model=d_model, d_feature=d_model / n_heads, d_ff=d_ff, kq_same=kq_same)
 
         self.out = nn.Sequential(
-            nn.Linear(d_model+embed_l, final_fc_dim), 
+            nn.Linear(d_model+d_model, final_fc_dim), 
             nn.ReLU(), 
-            nn.Dropout(self.dropout),
+            nn.Dropout(dropout),
             nn.Linear(final_fc_dim, 64), 
             nn.ReLU(), 
-            nn.Dropout(self.dropout),
+            nn.Dropout(dropout),
             nn.Linear(64, 1)
         )
 
-    def predict(self, q_data, qa_data, learned_seq, part_seq=None, tags_seq=None):
+    def predict(self, q_data, qa_data, learned_seq):
         # Batch First
         learned_embed_data = self.learned_embed(learned_seq)
-        q_embed_data = self.q_embed(q_data) + learned_embed_data
+        q_embed_data = self.q_embed(q_data)
         
         qa_data = (qa_data-q_data)//self.n_question
-        qa_embed_data = self.qa_embed(qa_data)+q_embed_data
+        qa_embed_data = self.qa_embed(qa_data) + q_embed_data + learned_embed_data
 
         d_output = self.model(q_embed_data, qa_embed_data)
 
@@ -122,10 +113,9 @@ class AKT(nn.Module):
         return output.squeeze(-1)
 
 class Architecture(nn.Module):
-    def __init__(self, n_question,  n_blocks, d_model, d_feature, d_ff, n_heads, dropout, kq_same):
+    def __init__(self, n_question, d_model, d_feature, d_ff, n_heads, dropout, kq_same):
         super().__init__()
         """
-            n_block : number of stacked blocks in the attention
             d_model : dimension of attention input/output
             d_feature : dimension of input in each of the multi-head attention part.
             n_head : number of heads. n_heads*d_feature = d_model
@@ -135,12 +125,12 @@ class Architecture(nn.Module):
         self.blocks_1 = nn.ModuleList([
             TransformerLayer(d_model=d_model, d_feature=d_model // n_heads,
                                 d_ff=d_ff, dropout=dropout, n_heads=n_heads, kq_same=kq_same)
-            for _ in range(n_blocks)
         ])
         self.blocks_2 = nn.ModuleList([
             TransformerLayer(d_model=d_model, d_feature=d_model // n_heads,
+                                d_ff=d_ff, dropout=dropout, n_heads=n_heads, kq_same=kq_same),
+            TransformerLayer(d_model=d_model, d_feature=d_model // n_heads,
                                 d_ff=d_ff, dropout=dropout, n_heads=n_heads, kq_same=kq_same)
-            for _ in range(n_blocks*2)
         ])
 
     def forward(self, q_embed_data, qa_embed_data):
@@ -148,17 +138,10 @@ class Architecture(nn.Module):
         x = q_embed_data
 
         # encoder
-        for block in self.blocks_1:  # encode qas
-            y = block(mask=1, query=y, key=y, values=y)
-        flag_first = True
-        for block in self.blocks_2:
-            if flag_first:  # peek current question
-                x = block(mask=1, query=x, key=x,
-                          values=x, apply_pos=False)
-                flag_first = False
-            else:  # dont peek current response
-                x = block(mask=0, query=x, key=x, values=y, apply_pos=True)
-                flag_first = True
+        y = self.blocks_1[0](mask=1, query=y, key=y, values=y)
+
+        x = self.blocks_2[0](mask=1, query=x, key=x,values=x, apply_pos=False)
+        x = self.blocks_2[1](mask=0, query=x, key=x, values=y, apply_pos=True)
         return x
 
 
@@ -201,17 +184,12 @@ class TransformerLayer(nn.Module):
         """
 
         seqlen = query.size(1)
-        nopeek_mask = np.triu(
-            np.ones((1, 1, seqlen, seqlen)), k=mask).astype('uint8')
+        nopeek_mask = np.triu(np.ones((1, 1, seqlen, seqlen)), k=mask).astype('uint8')
         src_mask = (torch.from_numpy(nopeek_mask) == 0).to(device)
-        if mask == 0:  # If 0, zero-padding is needed.
-            # Calls block.masked_attn_head.forward() method
-            query2 = self.masked_attn_head(
-                query, key, values, mask=src_mask, zero_pad=True)
+        if mask == 0:
+            query2 = self.masked_attn_head(query, key, values, mask=src_mask, zero_pad=True)
         else:
-            # Calls block.masked_attn_head.forward() method
-            query2 = self.masked_attn_head(
-                query, key, values, mask=src_mask, zero_pad=False)
+            query2 = self.masked_attn_head(query, key, values, mask=src_mask, zero_pad=False)
 
         query = query + self.dropout1((query2))
         query = self.layer_norm1(query)
@@ -278,25 +256,19 @@ class MultiHeadAttention(nn.Module):
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
         # calculate attention using function we will define next
-        gammas = self.gammas
-        scores = attention(q, k, v, self.d_k,
-                           mask, self.dropout, zero_pad, gammas)
+        scores = attention(q, k, v, self.d_k, mask, self.dropout, zero_pad, self.gammas)
 
         # concatenate heads and put through final linear layer
-        concat = scores.transpose(1, 2).contiguous()\
-            .view(bs, -1, self.d_model)
+        concat = scores.transpose(1, 2).contiguous().view(bs, -1, self.d_model)
 
-        output = self.out_proj(concat)
-
-        return output
+        return self.out_proj(concat)
 
 
 def attention(q, k, v, d_k, mask, dropout, zero_pad, gamma=None):
     """
     This is called by Multi-head atention object to find the values.
     """
-    scores = torch.matmul(q, k.transpose(-2, -1)) / \
-        math.sqrt(d_k)  # BS, 8, seqlen, seqlen
+    scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)  # BS, 8, seqlen, seqlen
     bs, head, seqlen = scores.size(0), scores.size(1), scores.size(2)
 
     x1 = torch.arange(seqlen).expand(seqlen, -1).to(device)
@@ -371,7 +343,7 @@ group = joblib.load("../input/akt-shrink-learned/group.pkl.zip")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f'device = {device}')
-model = AKT(n_question=params.n_question, n_blocks=params.n_block, d_model=params.d_model,
+model = AKT(n_question=params.n_question, d_model=params.d_model,
             dropout=params.dropout, kq_same=params.kq_same, l2=params.l2, n_heads=params.n_head,
             d_ff=params.d_ff, final_fc_dim=params.final_fc_dim).to(device)
 try:
@@ -390,19 +362,24 @@ class TestDataset(Dataset):
     def __init__(self, samples, test_df, n_skill, max_seq):
         super(TestDataset, self).__init__()
         self.samples = samples
-        self.test_df = test_df
+        # self.test_df = test_df
+        self.leng = test_df.shape[0]
+        self.user_id_list = test_df.loc[:, "user_id"].tolist()
+        self.target_id = test_df.loc[:, "content_id"].tolist()
 
         self.n_skill = n_skill
         self.max_seq = max_seq
 
     def __len__(self):
-        return self.test_df.shape[0]
+        return self.leng
 
     def __getitem__(self, index):
-        test_info = self.test_df.iloc[index]
+        # test_info = self.test_df.iloc[index]
 
-        user_id = test_info["user_id"]
-        target_id = test_info["content_id"]
+        # user_id = test_info["user_id"]
+        # target_id = test_info["content_id"]
+        user_id = self.user_id_list[index]
+        target_id = self.target_id[index]
 
         content_id_seq = np.zeros(self.max_seq, dtype=int)
         answered_correctly_seq = np.zeros(self.max_seq, dtype=int)

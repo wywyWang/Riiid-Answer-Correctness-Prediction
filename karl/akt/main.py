@@ -26,13 +26,21 @@ def try_makedirs(path_):
         except FileExistsError:
             pass
 
+WEIGHT_PTH = './model/akt_shrinked_smaller_tail_31'
+
 def train_one_dataset(params, train_dataloader, valid_dataloader):
     # ================================== model initialization ==================================
     model = AKT(n_question=params.n_question, n_blocks=params.n_block, d_model=params.d_model,
                     dropout=params.dropout, kq_same=params.kq_same, l2=params.l2, n_heads=params.n_head,
                     d_ff=params.d_ff, final_fc_dim=params.final_fc_dim).to(device)
+
+    print('===============================')
+    print(f'Load model from {WEIGHT_PTH}')
+    checkpoint = torch.load(WEIGHT_PTH)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    print('===============================')
+
     optimizer = torch.optim.Adam(model.parameters(), lr=params.lr, betas=(0.9, 0.999), eps=1e-8)
-    print("\n")
     # ================================== start training ==================================
     all_train_loss = {}
     all_train_accuracy = {}
@@ -195,8 +203,8 @@ if __name__ == '__main__':
     gc.collect()
 
     print('preparing indexes and group')
-    train_indexes = list(group.index)[:TRAIN_SAMPLES]
-    valid_indexes = list(group.index)[TRAIN_SAMPLES:]
+    train_indexes = list(group.index)[-TRAIN_SAMPLES:]
+    valid_indexes = list(group.index)[:-TRAIN_SAMPLES]
     train_group = group[group.index.isin(train_indexes)]
     valid_group = group[group.index.isin(valid_indexes)]
     del group, train_indexes, valid_indexes

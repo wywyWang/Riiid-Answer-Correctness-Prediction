@@ -96,6 +96,7 @@ class AKTDataset(Dataset):
         qa = content_id_seq[:].copy()
         qa += (answered_correctly_seq[:] == 1) * self.n_skill
         
+
         # learned_seq += 1
         # qa *= learned_seq
 
