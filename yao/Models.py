@@ -64,8 +64,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.n_skill, self.embed_dim, self.max_tags_len = n_skill, embed_dim, max_tags_len
         self.embedding = nn.Embedding(2 * n_skill + 1, embed_dim, padding_idx=0)
-        # self.pos_embedding = nn.Embedding(max_seq - 1, embed_dim, padding_idx=0)
-        self.pos_embedding = nn.Embedding(max_seq + 1, 1, padding_idx=0)
+        self.pos_embedding = nn.Embedding(max_seq + 1, embed_dim, padding_idx=0)
         self.e_embedding = nn.Embedding(n_skill + 1, embed_dim, padding_idx=0)
 
         self.tags_embedding = nn.Embedding.from_pretrained(pretrained_tags, freeze=False, padding_idx=TAGS_NUM)
@@ -82,13 +81,12 @@ class Encoder(nn.Module):
         
     def forward(self, x, question_ids, tag_ids):
         device = x.device
-        x = self.embedding(x)
 
         pos_id = self.fairseq_make_positions(x)
 
-        # pos_id = torch.arange(x.size(1)).unsqueeze(0).to(device)
+        x = self.embedding(x)
 
-        pos_x = self.pos_embedding(pos_id).squeeze(3)
+        pos_x = self.pos_embedding(pos_id)
         
         x = self.dropout(x + pos_x)
         x = x.permute(1, 0, 2) # x: [bs, s_len, embed] => [s_len, bs, embed]
