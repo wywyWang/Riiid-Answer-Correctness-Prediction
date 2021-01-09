@@ -1,4 +1,4 @@
-# Riiid-Answer-Correctness-Prediction
+# NCTU-ADSL: Riiid-Answer-Correctness-Prediction
 AAAI-2021 Workshop on AI Education
 
 We got top 8.6 percent all over the world among 3395 teams andreceived a Bronze medal.
